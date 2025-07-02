@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>T-Rex Run: Comic Book Style</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Press Start 2P', cursive;
+            background-color: #1a202c;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        canvas {
+            display: block;
+            border-radius: 0.75rem;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.1);
+            image-rendering: -moz-crisp-edges;
+            image-rendering: -webkit-crisp-edges;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        .game-container {
+            position: relative;
+        }
+        #ui-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.5rem;
+            pointer-events: none;
+        }
+        #score, #high-score {
+            font-size: 1.5rem;
+            color: white;
+            text-shadow: 3px 3px 0px #1e40af;
+        }
+        #game-over-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.6);
+            color: white;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            border-radius: 0.75rem;
+            pointer-events: auto;
+            backdrop-filter: blur(4px);
+        }
+        .button {
+            padding: 1rem 2rem;
+            font-size: 1.25rem;
+            color: #1a202c;
+            background-color: #f7fafc;
+            border: none;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            margin-top: 1.5rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 12px rgba(0,0,0,0.25);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="game-container">
+        <canvas id="gameCanvas"></canvas>
+        
+        <div id="ui-container">
+            <div class="w-full flex justify-between">
+                <div id="score">SCORE: 0</div>
+                <div id="high-score">HI: 0</div>
+            </div>
+        </div>
+
+        <div id="game-over-screen" style="display: none;">
+            <h1 class="text-5xl mb-4">Game Over</h1>
+            <p id="finalScore" class="text-2xl mb-6">Your Score: 0</p>
+            <button id="restartButton" class="button">Restart</button>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <script>
+        // --- Basic Setup ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const restartButton = document.getElementById('restartButton');
+        const scoreEl = document.getElementById('score');
+        const highScoreEl = document.getElementById('high-score');
+        const finalScoreEl = document.getElementById('finalScore');
+
+        let canvasWidth = 900;
+        let canvasHeight = 450;
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
+        
+        // --- Game Variables ---
+        let score = 0;
+        let highScore = localStorage.getItem('trexHighScore') || 0;
+        let gameSpeed = 6;
+        let gameSpeedIncrease = 0.0015;
+        let isPlaying = false;
+        let animationFrameId;
+        let frameCount = 0;
+
+        // --- Game Constants ---
+        const GRAVITY = 0.7;
+        const JUMP_FORCE = -17;
+        const GROUND_Y = canvasHeight * 0.7;
+
+        // --- Sound Effects ---
+        const synth = new Tone.PolySynth(Tone.Synth).toDestination();
+        synth.volume.value = -8;
+        const jumpSound = () => synth.triggerAttackRelease("C5", "8n");
+        const duckSound = () => synth.triggerAttackRelease("C4", "8n");
+        const gameOverSound = () => synth.triggerAttackRelease("C3", "4n");
+
+        // --- Dino Sprite Animation ---
+        const dinoSprite = {
+            colors: { main: '#2a9d8f', dark: '#264653', belly: '#e9c46a', highlight: '#f4a261' },
+            drawBase(leg1, leg2, bodyAngle = 0) {
+                ctx.strokeStyle = this.colors.dark; ctx.lineWidth = 3;
+                ctx.fillStyle = this.colors.main; ctx.beginPath(); ctx.moveTo(5, 40); ctx.lineTo(-20, 50); ctx.lineTo(10, 60); ctx.closePath(); ctx.fill(); ctx.stroke();
+                ctx.save(); ctx.rotate(bodyAngle);
+                ctx.fillStyle = this.colors.main; ctx.beginPath(); ctx.roundRect(10, 20, 50, 60, 10); ctx.fill(); ctx.stroke();
+                ctx.fillStyle = this.colors.belly; ctx.beginPath(); ctx.roundRect(20, 30, 30, 45, 10); ctx.fill();
+                ctx.fillStyle = this.colors.highlight; for(let i=0; i<5; i++) { ctx.fillRect(25 + Math.random()*20, 35+Math.random()*35, 2, 2); }
+                ctx.fillStyle = this.colors.main; ctx.beginPath(); ctx.roundRect(leg1.x, leg1.y, 15, 20, 5); ctx.roundRect(leg2.x, leg2.y, 15, 20, 5); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(55, 25); ctx.lineTo(85, 20); ctx.lineTo(80, 45); ctx.lineTo(55, 45); ctx.closePath(); ctx.fill(); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(70, 38); ctx.lineTo(83, 35); ctx.stroke();
+                ctx.beginPath(); ctx.roundRect(50, 45, 8, 12, 3); ctx.fill(); ctx.stroke();
+                ctx.fillStyle = 'white'; ctx.beginPath(); ctx.arc(75, 28, 5, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = 'black'; ctx.beginPath(); ctx.arc(77, 28, 2, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+            },
+            run: [
+                () => dinoSprite.drawBase({x: 20, y: 75}, {x: 45, y: 78}),
+                () => dinoSprite.drawBase({x: 22, y: 78}, {x: 40, y: 75}),
+                () => dinoSprite.drawBase({x: 25, y: 75}, {x: 35, y: 78}),
+                () => dinoSprite.drawBase({x: 22, y: 78}, {x: 40, y: 75}),
+            ],
+            jump: () => dinoSprite.drawBase({x: 30, y: 80}, {x: 50, y: 80}, Math.PI / 12),
+            land: [
+                () => dinoSprite.drawBase({x: 15, y: 75}, {x: 55, y: 75}, -Math.PI / 32),
+                () => dinoSprite.drawBase({x: 18, y: 75}, {x: 50, y: 77}, -Math.PI / 64),
+            ],
+            duck: [
+                () => dinoSprite.drawBase({x: 25, y: 75}, {x: 45, y: 75}),
+                () => dinoSprite.drawBase({x: 30, y: 75}, {x: 50, y: 75}),
+            ]
+        };
+
+        // --- Player (T-Rex) ---
+        const dino = {
+            x: 80, y: GROUND_Y, baseY: GROUND_Y, width: 80, height: 80, velocityY: 0,
+            isJumping: false, isDucking: false, isLanding: false, duckHeight: 50,
+            animationState: 'run', animationFrame: 0, frameTimer: 0, frameSpeed: 5,
+            draw() {
+                ctx.save();
+                const currentHeight = this.isDucking ? this.duckHeight : this.height;
+                ctx.translate(this.x, this.y - currentHeight);
+                switch(this.animationState) {
+                    case 'run': dinoSprite.run[this.animationFrame](); break;
+                    case 'jump': dinoSprite.jump(); break;
+                    case 'land': dinoSprite.land[this.animationFrame](); break;
+                    case 'duck': dinoSprite.duck[this.animationFrame](); break;
+                }
+                ctx.restore();
+            },
+            update() {
+                if (this.isLanding) {
+                    this.frameTimer++;
+                    if (this.frameTimer > this.frameSpeed) {
+                        this.frameTimer = 0; this.animationFrame++;
+                        if (this.animationFrame >= dinoSprite.land.length) { this.isLanding = false; this.animationFrame = 0; }
+                    }
+                } else {
+                    this.frameTimer++;
+                    if (this.frameTimer > this.frameSpeed) {
+                        this.frameTimer = 0;
+                        const currentAnimation = dinoSprite[this.animationState];
+                        if (Array.isArray(currentAnimation)) { this.animationFrame = (this.animationFrame + 1) % currentAnimation.length; }
+                    }
+                }
+                this.animationState = this.isJumping ? 'jump' : (this.isLanding ? 'land' : (this.isDucking ? 'duck' : 'run'));
+                if (this.isJumping) { this.velocityY += GRAVITY; this.y += this.velocityY; }
+                if (this.y > this.baseY) {
+                    this.y = this.baseY; this.velocityY = 0;
+                    if (this.isJumping) { this.isJumping = false; this.isLanding = true; this.animationFrame = 0; this.frameTimer = 0; }
+                }
+            },
+            jump() { if (!this.isJumping && !this.isDucking && !this.isLanding) { this.velocityY = JUMP_FORCE; this.isJumping = true; jumpSound(); } },
+            duck(state) { if (!this.isJumping && !this.isLanding) { if (this.isDucking !== state) { this.isDucking = state; this.animationFrame = 0; if (state) duckSound(); } } }
+        };
+
+        // --- Obstacles ---
+        let obstacles = []; let timeToNextObstacle = 100;
+        function createObstacle() {
+            const isFlyingObstacle = Math.random() > 0.7;
+            const obstacle = {
+                x: canvasWidth, isFlying: isFlyingObstacle,
+                draw() { ctx.save(); if (this.isFlying) { this.drawPterodactyl(); } else { this.drawCactus(); } ctx.restore(); },
+                drawCactus() {
+                    this.height = 60; this.y = GROUND_Y - this.height;
+                    ctx.translate(this.x, this.y);
+                    const mainColor = '#2a9d8f';
+                    
+                    const drawSegment = (x, y, w, h) => {
+                        ctx.fillStyle = mainColor;
+                        ctx.strokeStyle = 'black';
+                        ctx.lineWidth = 4;
+                        ctx.beginPath(); ctx.roundRect(x, y, w, h, 8); ctx.fill(); ctx.stroke();
+
+                        ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+                        for (let i = x + w * 0.5; i < x + w - 5; i += 4) {
+                            for (let j = y + 5; j < y + h - 5; j += 4) {
+                                ctx.beginPath(); ctx.arc(i, j, 1, 0, Math.PI * 2); ctx.fill();
+                            }
+                        }
+                        
+                        // Sharper, more numerous thorns
+                        ctx.fillStyle = 'black';
+                        for(let i = 5; i < h; i += 10) {
+                            // Left side
+                            ctx.beginPath(); ctx.moveTo(x, y + i); ctx.lineTo(x - 6, y + i - 3); ctx.lineTo(x - 6, y + i + 3); ctx.closePath(); ctx.fill();
+                            // Right side
+                            ctx.beginPath(); ctx.moveTo(x + w, y + i); ctx.lineTo(x + w + 6, y + i - 3); ctx.lineTo(x + w + 6, y + i + 3); ctx.closePath(); ctx.fill();
+                        }
+                    };
+
+                    if (this.type === 0) { this.width = 25; drawSegment(0, 0, this.width, this.height);
+                    } else if (this.type === 1) { this.width = 50; drawSegment(12, 15, 25, 45); drawSegment(0, 25, 25, 15);
+                    } else { this.width = 60; drawSegment(20, 0, 25, 60); drawSegment(0, 15, 25, 15); drawSegment(40, 25, 25, 15); }
+                },
+                drawPterodactyl() {
+                    this.width = 80; this.height = 50; this.y = GROUND_Y - 100 - (this.flyHeight * 40);
+                    ctx.translate(this.x, this.y);
+                    const bodyColor = '#f2a649', wingColor = '#f9c859';
+                    
+                    ctx.strokeStyle = 'black';
+                    ctx.lineWidth = 4;
+
+                    const wingY = frameCount % 20 < 10 ? 10 : -5;
+
+                    // Action lines
+                    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath(); ctx.moveTo(this.width, this.height / 2); ctx.lineTo(this.width + 20, this.height / 2 + wingY); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(this.width, this.height / 2 + 15); ctx.lineTo(this.width + 15, this.height / 2 + 15 + wingY); ctx.stroke();
+                    
+                    ctx.lineWidth = 4;
+                    ctx.strokeStyle = 'black';
+
+                    // Wings
+                    ctx.fillStyle = wingColor;
+                    ctx.beginPath();
+                    ctx.moveTo(30, 25); // Wing root
+                    ctx.lineTo(0, 20 + wingY); // Wing tip
+                    ctx.lineTo(35, 30); // Back of wing
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // Body and Head
+                    ctx.fillStyle = bodyColor;
+                    ctx.beginPath();
+                    ctx.moveTo(25, 30); // Back of body
+                    ctx.quadraticCurveTo(50, 10, 75, 20); // Crest and beak
+                    ctx.quadraticCurveTo(60, 45, 30, 40); // Body bottom
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+
+                    // Eye
+                    ctx.fillStyle = 'white';
+                    ctx.strokeStyle = 'black';
+                    ctx.beginPath();
+                    ctx.arc(60, 22, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.fillStyle = 'black';
+                    ctx.beginPath();
+                    ctx.moveTo(62, 20);
+                    ctx.lineTo(58, 24);
+                    ctx.stroke();
+                }
+            };
+            if (isFlyingObstacle) { obstacle.flyHeight = Math.floor(Math.random() * 2); } else { obstacle.type = Math.floor(Math.random() * 3); }
+            obstacles.push(obstacle);
+        }
+        function updateObstacles() {
+            timeToNextObstacle--;
+            if (timeToNextObstacle <= 0) { createObstacle(); timeToNextObstacle = Math.floor(Math.random() * 80 + 100) / (gameSpeed / 6); }
+            obstacles.forEach(obs => obs.x -= gameSpeed);
+            obstacles = obstacles.filter(obs => obs.x + (obs.width || 90) > 0);
+        }
+
+        // --- Scenery ---
+        class Layer {
+            constructor(speedModifier) { this.speedModifier = speedModifier; this.x = 0; this.items = []; }
+            update() { this.x -= gameSpeed * this.speedModifier; if (this.x <= -canvasWidth) this.x = 0; }
+            draw(color, shadowColor) {
+                ctx.save(); ctx.translate(this.x, 0);
+                this.items.forEach(item => item.draw(ctx, color, shadowColor));
+                ctx.translate(canvasWidth, 0);
+                this.items.forEach(item => item.draw(ctx, color, shadowColor));
+                ctx.restore();
+            }
+        }
+        class MountainLayer extends Layer {
+            constructor(speedModifier, count, heightRange) { super(speedModifier); this.count = count; this.heightRange = heightRange; this.generateItems(); }
+            generateItems() {
+                for (let i = 0; i < this.count; i++) {
+                    const x = Math.random() * canvasWidth;
+                    const h = Math.random() * (this.heightRange[1] - this.heightRange[0]) + this.heightRange[0];
+                    const w = h * (Math.random() * 2 + 2);
+                    const peaks = []; const peakCount = Math.floor(Math.random() * 2) + 2;
+                    let currentX = x;
+                    for (let j = 0; j < peakCount; j++) {
+                        currentX += Math.random() * (w / peakCount);
+                        peaks.push({ x: currentX, y: GROUND_Y - h * (Math.random() * 0.5 + 0.5) });
+                    }
+                    this.items.push({
+                        draw: (ctx, color, shadowColor) => {
+                            ctx.fillStyle = shadowColor;
+                            ctx.beginPath();
+                            ctx.moveTo(x + 10, GROUND_Y);
+                            peaks.forEach(p => ctx.lineTo(p.x + 10, p.y + 10));
+                            ctx.lineTo(x + w + 10, GROUND_Y);
+                            ctx.closePath();
+                            ctx.fill();
+                            ctx.fillStyle = color;
+                            ctx.strokeStyle = 'black';
+                            ctx.lineWidth = 4;
+                            ctx.beginPath();
+                            ctx.moveTo(x, GROUND_Y);
+                            peaks.forEach(p => ctx.lineTo(p.x, p.y));
+                            ctx.lineTo(x + w, GROUND_Y);
+                            ctx.closePath();
+                            ctx.fill();
+                            ctx.stroke();
+                        }
+                    });
+                }
+            }
+        }
+        const farMountains = new MountainLayer(0.1, 10, [100, 250]);
+        const midMountains = new MountainLayer(0.3, 15, [50, 150]);
+        const backgroundLayers = [farMountains, midMountains];
+
+        // --- Environment Drawing ---
+        function drawBackground() {
+            const skyGradient = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+            skyGradient.addColorStop(0, '#f9c859'); skyGradient.addColorStop(1, '#f2a649');
+            ctx.fillStyle = skyGradient; ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+            
+            farMountains.draw('#d36582', '#a14662');
+            midMountains.draw('#823d77', '#602d57');
+            
+            const groundGradient = ctx.createLinearGradient(0, GROUND_Y, 0, canvasHeight);
+            groundGradient.addColorStop(0, '#66a5ad'); groundGradient.addColorStop(1, '#4e8a94');
+            ctx.fillStyle = groundGradient; ctx.fillRect(0, GROUND_Y, canvasWidth, canvasHeight - GROUND_Y);
+        }
+
+        // --- Game Loop ---
+        function gameLoop() {
+            if (!isPlaying) return;
+            animationFrameId = requestAnimationFrame(gameLoop);
+            frameCount++;
+            drawBackground();
+            backgroundLayers.forEach(layer => layer.update());
+            dino.update(); dino.draw();
+            updateObstacles(); obstacles.forEach(obs => obs.draw());
+            checkCollisions(); score++; gameSpeed += gameSpeedIncrease;
+            scoreEl.textContent = `SCORE: ${Math.floor(score)}`;
+        }
+        
+        // --- Game State Management ---
+        function startGame() {
+            Tone.start(); score = 0; gameSpeed = 6; obstacles = [];
+            dino.y = dino.baseY; dino.isJumping = false; dino.isDucking = false;
+            isPlaying = true; gameOverScreen.style.display = 'none';
+            gameLoop();
+        }
+        function gameOver() {
+            if (!isPlaying) return; isPlaying = false; gameOverSound(); cancelAnimationFrame(animationFrameId);
+            if (score > highScore) { highScore = Math.floor(score); localStorage.setItem('trexHighScore', highScore); updateHighScoreDisplay(); }
+            finalScoreEl.textContent = `Your Score: ${Math.floor(score)}`;
+            gameOverScreen.style.display = 'flex';
+        }
+        function updateHighScoreDisplay() { highScoreEl.textContent = `HI: ${Math.floor(score)}`; }
+        
+        // --- Event Listeners ---
+        let touchStartY = 0;
+        function handleKeyDown(e) { if (e.code === 'Space' || e.code === 'ArrowUp') dino.jump(); if (e.code === 'ArrowDown') dino.duck(true); }
+        function handleKeyUp(e) { if (e.code === 'ArrowDown') dino.duck(false); }
+        function handleTouchStart(e) { touchStartY = e.touches[0].clientY; }
+        function handleTouchEnd(e) {
+            const touchEndY = e.changedTouches[0].clientY;
+            if (touchStartY - touchEndY > 50) { dino.jump(); } else if (touchEndY - touchStartY > 50) { dino.duck(true); setTimeout(() => dino.duck(false), 500); } else { dino.jump(); }
+        }
+        window.addEventListener('keydown', handleKeyDown); window.addEventListener('keyup', handleKeyUp);
+        canvas.addEventListener('touchstart', handleTouchStart, { passive: true }); canvas.addEventListener('touchend', handleTouchEnd, { passive: true });
+        restartButton.addEventListener('click', startGame);
+
+        // --- Initial Load ---
+        window.onload = () => { updateHighScoreDisplay(); startGame(); };
+
+        function checkCollisions() {
+            for (const obs of obstacles) {
+                const dinoHeight = dino.isDucking ? dino.duckHeight : dino.height;
+                const dinoBox = { x: dino.x, y: dino.y - dinoHeight, width: dino.width, height: dino.height };
+                const obsBox = { x: obs.x, y: obs.y, width: obs.width, height: obs.height };
+                if (dinoBox.x < obsBox.x + obsBox.width && dinoBox.x + dinoBox.width > obsBox.x &&
+                    dinoBox.y < obsBox.y + obsBox.height && dinoBox.y + dinoBox.height > obsBox.y) {
+                    gameOver();
+                }
+            }
+        }
+    </script>
+</body>
+</html>
